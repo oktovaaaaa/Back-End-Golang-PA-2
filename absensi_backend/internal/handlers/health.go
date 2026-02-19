@@ -1,4 +1,5 @@
-	package handlers
+// internal/handlers/health.go
+package handlers
 
 	import "github.com/gin-gonic/gin"
 

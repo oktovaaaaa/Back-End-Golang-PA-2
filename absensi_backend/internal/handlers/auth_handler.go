@@ -4,6 +4,7 @@ package handlers
 import (
 	"net/http"
 	"os"
+	"regexp"
 	"strings"
 	"time"
 
@@ -21,6 +22,31 @@ type AuthHandler struct {
 
 func NewAuthHandler(db *gorm.DB) *AuthHandler { return &AuthHandler{DB: db} }
 
+// =========================
+// Password policy (handler-only)
+// =========================
+func validatePasswordStrong(pw string) string {
+	if len(pw) < 8 {
+		return "password minimal 8 karakter"
+	}
+	if !regexp.MustCompile(`[a-z]`).MatchString(pw) {
+		return "password wajib mengandung huruf kecil (a-z)"
+	}
+	if !regexp.MustCompile(`[A-Z]`).MatchString(pw) {
+		return "password wajib mengandung huruf besar (A-Z)"
+	}
+	if !regexp.MustCompile(`\d`).MatchString(pw) {
+		return "password wajib mengandung angka (0-9)"
+	}
+	if !regexp.MustCompile(`[!@#\$%\^&\*\(\)_\+\-=\[\]{};:"\\|,.<>\/\?` + "`" + `~]`).MatchString(pw) {
+		return "password wajib mengandung karakter spesial (contoh: !@#)"
+	}
+	return ""
+}
+
+// =========================
+// REGISTER ADMIN
+// =========================
 type RegisterAdminReq struct {
 	FullName string `json:"full_name" binding:"required"`
 	Email    string `json:"email" binding:"required"`
@@ -41,8 +67,16 @@ func (h *AuthHandler) RegisterAdmin(c *gin.Context) {
 	}
 
 	req.Email = strings.ToLower(strings.TrimSpace(req.Email))
+	req.FullName = strings.TrimSpace(req.FullName)
+
 	if req.Email == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "email required"})
+		return
+	}
+
+	// password strength
+	if msg := validatePasswordStrong(req.Password); msg != "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": msg})
 		return
 	}
 
@@ -66,10 +100,10 @@ func (h *AuthHandler) RegisterAdmin(c *gin.Context) {
 
 	err = h.DB.Transaction(func(tx *gorm.DB) error {
 		company := models.Company{
-			Name:    req.CompanyName,
-			Email:   req.CompanyEmail,
-			Phone:   req.CompanyPhone,
-			Address: req.CompanyAddr,
+			Name:    strings.TrimSpace(req.CompanyName),
+			Email:   strings.TrimSpace(req.CompanyEmail),
+			Phone:   strings.TrimSpace(req.CompanyPhone),
+			Address: strings.TrimSpace(req.CompanyAddr),
 		}
 		if err := tx.Create(&company).Error; err != nil {
 			return err
@@ -81,7 +115,7 @@ func (h *AuthHandler) RegisterAdmin(c *gin.Context) {
 			Status:       models.StatusActive,
 			FullName:     req.FullName,
 			Email:        req.Email,
-			Phone:        req.Phone,
+			Phone:        strings.TrimSpace(req.Phone),
 			PasswordHash: pwHash,
 			TOTPSecret:   secret,
 			TOTPEnabled:  false,
@@ -103,6 +137,9 @@ func (h *AuthHandler) RegisterAdmin(c *gin.Context) {
 	})
 }
 
+// =========================
+// REGISTER EMPLOYEE
+// =========================
 type RegisterEmployeeReq struct {
 	InviteToken string `json:"invite_token" binding:"required"`
 	FullName    string `json:"full_name" binding:"required"`
@@ -120,6 +157,18 @@ func (h *AuthHandler) RegisterEmployee(c *gin.Context) {
 
 	req.Email = strings.ToLower(strings.TrimSpace(req.Email))
 	req.InviteToken = strings.TrimSpace(req.InviteToken)
+	req.FullName = strings.TrimSpace(req.FullName)
+
+	if req.Email == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "email required"})
+		return
+	}
+
+	// password strength
+	if msg := validatePasswordStrong(req.Password); msg != "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": msg})
+		return
+	}
 
 	var inv models.InviteToken
 	if err := h.DB.Where("token = ?", req.InviteToken).First(&inv).Error; err != nil {
@@ -162,7 +211,7 @@ func (h *AuthHandler) RegisterEmployee(c *gin.Context) {
 			Status:       models.StatusPending,
 			FullName:     req.FullName,
 			Email:        req.Email,
-			Phone:        req.Phone,
+			Phone:        strings.TrimSpace(req.Phone),
 			PasswordHash: pwHash,
 			TOTPSecret:   secret,
 			TOTPEnabled:  false,
@@ -189,6 +238,9 @@ func (h *AuthHandler) RegisterEmployee(c *gin.Context) {
 	})
 }
 
+// =========================
+// VERIFY TOTP SETUP
+// =========================
 type VerifyTotpReq struct {
 	Email string `json:"email" binding:"required"`
 	Code  string `json:"code" binding:"required"`
@@ -201,6 +253,7 @@ func (h *AuthHandler) VerifyTOTPSetup(c *gin.Context) {
 		return
 	}
 	email := strings.ToLower(strings.TrimSpace(req.Email))
+	code := strings.TrimSpace(req.Code)
 
 	var u models.User
 	if err := h.DB.Where("email = ?", email).First(&u).Error; err != nil {
@@ -211,7 +264,9 @@ func (h *AuthHandler) VerifyTOTPSetup(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "totp not initialized"})
 		return
 	}
-	if !utils.VerifyTOTP(u.TOTPSecret, strings.TrimSpace(req.Code)) {
+
+	// FIX: VerifyTOTP(code, secret)  (sebelumnya kebalik)
+	if !utils.VerifyTOTP(code, u.TOTPSecret) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid totp"})
 		return
 	}
@@ -225,10 +280,15 @@ func (h *AuthHandler) VerifyTOTPSetup(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"status": "ok", "message": "totp enabled"})
 }
 
+// =========================
+// LOGIN
+// =========================
 type LoginReq struct {
 	Email    string `json:"email" binding:"required"`
 	Password string `json:"password" binding:"required"`
-	TOTPCode string `json:"totp_code" binding:"required"`
+	// NOTE: TOTPCode sekarang OPTIONAL (tidak binding required),
+	// karena hanya WAJIB saat first-login (device binding pertama).
+	TOTPCode string `json:"totp_code"`
 	DeviceID string `json:"device_id" binding:"required"`
 }
 
@@ -248,6 +308,7 @@ func (h *AuthHandler) Login(c *gin.Context) {
 
 	email := strings.ToLower(strings.TrimSpace(req.Email))
 	deviceID := strings.TrimSpace(req.DeviceID)
+	totp := strings.TrimSpace(req.TOTPCode)
 
 	var u models.User
 	if err := h.DB.Where("email = ?", email).First(&u).Error; err != nil {
@@ -283,19 +344,34 @@ func (h *AuthHandler) Login(c *gin.Context) {
 		return
 	}
 
-	if !u.TOTPEnabled || !utils.VerifyTOTP(u.TOTPSecret, strings.TrimSpace(req.TOTPCode)) {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid totp"})
-		return
-	}
-
+	// Single-device check
 	if u.BoundDeviceID != "" && u.BoundDeviceID != deviceID {
 		c.JSON(http.StatusForbidden, gin.H{"error": "account already active on another device"})
 		return
 	}
+
+	// TOTP rules:
+	// - Saat first-login (belum ada bound device) => WAJIB TOTP enabled + valid
+	// - Setelah bound device ada => TOTP tidak wajib (boleh kosong)
 	if u.BoundDeviceID == "" {
+		if !u.TOTPEnabled {
+			c.JSON(http.StatusForbidden, gin.H{"error": "totp not enabled"})
+			return
+		}
+		if totp == "" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "totp required for first login"})
+			return
+		}
+		// FIX: VerifyTOTP(code, secret)
+		if !utils.VerifyTOTP(totp, u.TOTPSecret) {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid totp"})
+			return
+		}
+		// bind device on first success
 		u.BoundDeviceID = deviceID
 	}
 
+	// reset lock counters on successful login
 	u.FailedLoginCount = 0
 	u.LockoutUntil = nil
 	_ = h.DB.Save(&u).Error
@@ -308,7 +384,11 @@ func (h *AuthHandler) Login(c *gin.Context) {
 		"exp":        time.Now().Add(24 * time.Hour).Unix(),
 	}
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
-	signed, _ := token.SignedString([]byte(secret))
+	signed, err := token.SignedString([]byte(secret))
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "sign token failed"})
+		return
+	}
 
 	c.JSON(http.StatusOK, gin.H{
 		"status": "ok",
@@ -324,8 +404,16 @@ func (h *AuthHandler) Login(c *gin.Context) {
 }
 
 func (h *AuthHandler) Logout(c *gin.Context) {
-	userIDAny, _ := c.Get("user_id")
-	userID := userIDAny.(uint)
+	userIDAny, ok := c.Get("user_id")
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "missing user"})
+		return
+	}
+	userID, ok := userIDAny.(uint)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid user"})
+		return
+	}
 
 	var u models.User
 	if err := h.DB.First(&u, userID).Error; err != nil {

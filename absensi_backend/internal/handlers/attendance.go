@@ -1,3 +1,4 @@
+// internal/handlers/attendance.go
 package handlers
 
 import (
@@ -24,13 +25,8 @@ func NewAttendanceHandler(db *gorm.DB) *AttendanceHandler {
 	return &AttendanceHandler{DB: db}
 }
 
-func (h *AttendanceHandler) CheckIn(c *gin.Context) {
-	h.createAttendance(c, "checkin")
-}
-
-func (h *AttendanceHandler) CheckOut(c *gin.Context) {
-	h.createAttendance(c, "checkout")
-}
+func (h *AttendanceHandler) CheckIn(c *gin.Context)  { h.createAttendance(c, "checkin") }
+func (h *AttendanceHandler) CheckOut(c *gin.Context) { h.createAttendance(c, "checkout") }
 
 func (h *AttendanceHandler) createAttendance(c *gin.Context, typ string) {
 	var req AttendanceRequest
@@ -67,7 +63,7 @@ func (h *AttendanceHandler) createAttendance(c *gin.Context, typ string) {
 
 func (h *AttendanceHandler) ListByEmployee(c *gin.Context) {
 	employeeID := strings.TrimSpace(c.Param("employee_id"))
-	if employeeID == "" {	
+	if employeeID == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "employee_id required"})
 		return
 	}

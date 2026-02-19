@@ -65,12 +65,23 @@ func (h *AdminHandler) ListPendingEmployees(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"status": "ok", "data": rows})
 }
 
+func parseUintParam(c *gin.Context, name string) (uint, bool) {
+	raw := strings.TrimSpace(c.Param(name))
+	n, err := strconv.ParseUint(raw, 10, 64)
+	if err != nil || n == 0 {
+		return 0, false
+	}
+	return uint(n), true
+}
+
 func (h *AdminHandler) ApproveEmployee(c *gin.Context) {
 	companyID := c.GetUint("company_id")
 
-	idStr := strings.TrimSpace(c.Param("id"))
-	id64, _ := strconv.ParseUint(idStr, 10, 64)
-	id := uint(id64)
+	id, ok := parseUintParam(c, "id")
+	if !ok {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid user id"})
+		return
+	}
 
 	var u models.User
 	if err := h.DB.Where("company_id = ? AND id = ?", companyID, id).First(&u).Error; err != nil {
@@ -90,9 +101,11 @@ func (h *AdminHandler) ApproveEmployee(c *gin.Context) {
 func (h *AdminHandler) RejectEmployee(c *gin.Context) {
 	companyID := c.GetUint("company_id")
 
-	idStr := strings.TrimSpace(c.Param("id"))
-	id64, _ := strconv.ParseUint(idStr, 10, 64)
-	id := uint(id64)
+	id, ok := parseUintParam(c, "id")
+	if !ok {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid user id"})
+		return
+	}
 
 	var u models.User
 	if err := h.DB.Where("company_id = ? AND id = ?", companyID, id).First(&u).Error; err != nil {
@@ -112,9 +125,11 @@ func (h *AdminHandler) RejectEmployee(c *gin.Context) {
 func (h *AdminHandler) ResetDeviceBinding(c *gin.Context) {
 	companyID := c.GetUint("company_id")
 
-	idStr := strings.TrimSpace(c.Param("id"))
-	id64, _ := strconv.ParseUint(idStr, 10, 64)
-	id := uint(id64)
+	id, ok := parseUintParam(c, "id")
+	if !ok {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid user id"})
+		return
+	}
 
 	var u models.User
 	if err := h.DB.Where("company_id = ? AND id = ?", companyID, id).First(&u).Error; err != nil {
